@@ -1,0 +1,118 @@
+---
+title: "p8105 Homework 5"
+author: Tory Lynch
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(broom)
+```
+
+##### Problem 1 
+```{r}
+#Read in and create tidy table for file names
+file_names = list.files(path = "./data", pattern = "*.csv") 
+
+file_names_table = tibble(file_names) %>% 
+  unnest() %>% 
+  rowid_to_column() %>% 
+  mutate(file_names = str_replace(file_names, ".csv", "")) %>% 
+  separate(file_names, c("arm", "obs"))
+```
+
+```{r}
+#Read in and create table for observations 
+file_list_table = file_names %>% 
+  map(function (x){
+    read.csv(paste0("./data/", x))
+  }) 
+
+file_table = tibble(file_list_table) %>% 
+  unnest() %>% 
+  rowid_to_column() 
+```
+
+```{r, warning = FALSE}
+#Tidy table and create plot 
+ left_join(file_names_table, file_table) %>% 
+  gather(key = week, value = obs, week_1:week_8) %>% 
+  mutate(week = as.numeric(str_replace(week, "week_", ""))) %>% 
+  mutate(participant = as.factor(rowid)) %>% 
+  select(-rowid) %>% 
+  ggplot(aes(x = week, y = obs, group = participant, color = participant, linetype = arm)) + 
+    geom_line() + 
+    labs(
+      title = "Observations over Time per Subject", 
+      x = "Week", 
+      y = "Observation") +
+      theme(plot.title = element_text(hjust = 0.5)) +
+      scale_colour_discrete(name = "Arm", breaks = c("Exp", "Control"))
+```
+
+The participants in the experimental arm all had higher observation values compared to the control arm at the end of the 8-week study period. For the first six weeks of the study, around half of the participants had observation values that were comparable to the high-end of observation values in the control arm; by week 7, there was no overlap between the two arms. Within each arm, however, the participants did not experience constant increases or decreases in observation values. The overall trend in the experimental arm was that the end observation values were higher than at the beginning, but the peak was not necessarily at the end of the study period; observation values peaked between weeks 5 - 7 for some participants. There were no clear trends in the observation values over time for participants in the control arm. 
+
+##### Problem 2
+```{r, message=FALSE}
+#Read in homicide data
+homicide_data = read_csv("homicide-data.csv") %>% 
+  mutate(city_state = str_c(city, ", ", state))
+```
+
+The Washington Post compiled data on homicides from 50 American cities between 2007 and 2015; the database includes 52,179 rows, each of which represents a victim of homicide, and 12 columns. The name, race, age, and sex of each victim is reported, as well as the location (city, state, latitude, longitude) and report date of the crime. Finally, a disposition variable classifies each crime as closed, with or without an arrest, or open with no arrest. 
+
+```{r}
+#Total number of homicides and number of unsolved homicides per city 
+unsolv_hom_table = homicide_data %>% 
+  mutate(unsolved_hom = str_detect(disposition, "by")) %>% 
+  group_by(city_state) %>% 
+  summarise(total_hom = n_distinct(uid), unsolv_hom = sum(unsolved_hom == "FALSE")) %>% 
+  rowid_to_column()
+
+unsolv_hom_table %>% 
+  knitr::kable()
+```
+
+```{r}
+#Proportion of unsolved homicides in Baltimore, MD 
+balt_prop_test = prop.test(x = unsolv_hom_table$unsolv_hom[[3]], n = unsolv_hom_table$total_hom[[3]])
+balt_prop_unsolved = broom::tidy(balt_prop_test)
+```
+
+In Baltimore, Maryland, `r balt_prop_unsolved$estimate` of homicides are unsolved (95% CI:`r balt_prop_unsolved$conf.low`, `r balt_prop_unsolved$conf.high`). 
+
+```{r, message = FALSE}
+#Proportion of unsolved homicides in all cities 
+prop_table_all = unsolv_hom_table %>% 
+  select(total_hom, unsolv_hom) %>% 
+  mutate(result = map2(unsolv_hom, total_hom, prop.test)) %>% #
+  mutate(result = map(result, tidy)) %>% 
+  unnest() %>% 
+  select(estimate, conf.low, conf.high) %>% 
+  rowid_to_column()
+  
+all_cities_unsolv_prop = unsolv_hom_table %>% 
+  left_join(prop_table_all) %>% 
+  select(city_state, estimate, conf.low, conf.high) 
+all_cities_unsolv_prop %>% 
+  knitr::kable()
+```
+
+```{r}
+#Plot of proportion of unsolved homicides by city 
+all_cities_unsolv_prop %>% 
+  mutate(city_state = forcats::fct_reorder(city_state, estimate)) %>% 
+  filter(city_state != "Tulsa, AL") %>% #removed because of data entry error - lat/long place this homicide in Tulsa, OK, not Tulsa, AL
+  ggplot(aes(x = city_state, y = estimate)) +
+  geom_point(alpha = .3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high)) + 
+  labs(
+    title = "Proportion of Unsolved Homicides in 50 American Cities", 
+    x = "City, State", 
+    y = "Proportion of Unsolved Homicides (95% CI)") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
